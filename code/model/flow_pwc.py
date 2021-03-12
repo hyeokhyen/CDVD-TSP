@@ -9,8 +9,11 @@ from utils import utils
 try:
     from model import correlation
 except:
-    sys.path.insert(0, './correlation')
-    import correlation  # you should consider upgrading python
+    try:
+        sys.path.insert(0, './correlation')
+        import correlation  # you should consider upgrading python
+    except:
+        from . import correlation
 
 
 def make_model(args):

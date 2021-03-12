@@ -8,7 +8,7 @@ import math
 import time
 import argparse
 from model.cdvd_tsp import CDVD_TSP
-
+from pprint import pprint
 
 class Traverse_Logger:
     def __init__(self, result_dir, filename='inference_log.txt'):
@@ -27,31 +27,38 @@ class Inference:
         self.save_image = args.save_image
         self.border = args.border
         self.model_path = args.model_path
-        self.data_path = args.data_path
-        self.result_path = args.result_path
+        # self.data_path = args.data_path
+        # self.result_path = args.result_path
         self.n_seq = 5
         self.size_must_mode = 4
-        self.device = 'cuda'
+        self.device = args.device
 
-        if not os.path.exists(self.result_path):
-            os.mkdir(self.result_path)
-            print('mkdir: {}'.format(self.result_path))
+        # if not os.path.exists(self.result_path):
+        #     # os.mkdir(self.result_path)
+        #     os.makedirs(self.result_path, exist_ok=True)
+        #     print('mkdir: {}'.format(self.result_path))
 
-        self.input_path = os.path.join(self.data_path, "blur")
-        self.GT_path = os.path.join(self.data_path, "gt")
+        # if args.default_data == 'DVD':
+        #     self.input_path = os.path.join(self.data_path, "input")
+        #     self.GT_path = os.path.join(self.data_path, "GT")
+        # else:
+        #     self.input_path = os.path.join(self.data_path, "blur")
+        #     self.GT_path = os.path.join(self.data_path, "gt")
+        # print (f'input_path: {self.input_path}')
+        # print (f'GT_path: {self.GT_path}')
 
         now_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-        self.logger = Traverse_Logger(self.result_path, 'inference_log_{}.txt'.format(now_time))
+        # self.logger = Traverse_Logger(self.result_path, 'inference_log_{}.txt'.format(now_time))
 
-        self.logger.write_log('Inference - {}'.format(now_time))
-        self.logger.write_log('save_image: {}'.format(self.save_image))
-        self.logger.write_log('border: {}'.format(self.border))
-        self.logger.write_log('model_path: {}'.format(self.model_path))
-        self.logger.write_log('data_path: {}'.format(self.data_path))
-        self.logger.write_log('result_path: {}'.format(self.result_path))
-        self.logger.write_log('n_seq: {}'.format(self.n_seq))
-        self.logger.write_log('size_must_mode: {}'.format(self.size_must_mode))
-        self.logger.write_log('device: {}'.format(self.device))
+        # self.logger.write_log('Inference - {}'.format(now_time))
+        # self.logger.write_log('save_image: {}'.format(self.save_image))
+        # self.logger.write_log('border: {}'.format(self.border))
+        # self.logger.write_log('model_path: {}'.format(self.model_path))
+        # self.logger.write_log('data_path: {}'.format(self.data_path))
+        # self.logger.write_log('result_path: {}'.format(self.result_path))
+        # self.logger.write_log('n_seq: {}'.format(self.n_seq))
+        # self.logger.write_log('size_must_mode: {}'.format(self.size_must_mode))
+        # self.logger.write_log('device: {}'.format(self.device))
 
         self.net = CDVD_TSP(
             in_channels=3, n_sequence=5, out_channels=3, n_resblock=3, n_feat=32,
@@ -59,22 +66,79 @@ class Inference:
         )
         self.net.load_state_dict(torch.load(self.model_path), strict=False)
         self.net = self.net.to(self.device)
-        self.logger.write_log('Loading model from {}'.format(self.model_path))
+        # self.logger.write_log('Loading model from {}'.format(self.model_path))
         self.net.eval()
+    
+    # Predict a video sequence
+    def predict(self, data_path, result_path):
+        if not os.path.exists(result_path):
+            # os.mkdir(self.result_path)
+            os.makedirs(result_path, exist_ok=True)
+            print('mkdir: {}'.format(result_path))
+        
+        with torch.no_grad():
+            input_frames = sorted(glob.glob(os.path.join(data_path, "*")))
+            input_seqs = self.gene_seq(input_frames, n_seq=self.n_seq)
+            # pprint (input_seqs)
 
-    def infer(self):
+            for in_seq in input_seqs:
+                # pprint (in_seq)
+                # assert False
+
+                filename = os.path.basename(in_seq[self.n_seq // 2]).split('.')[0]
+                file_result = os.path.join(result_path, f'{filename}.png')
+                if os.path.exists(file_result):
+                    continue
+
+                start_time = time.time()
+                inputs = [imageio.imread(p) for p in in_seq]
+
+                h, w, c = inputs[self.n_seq // 2].shape
+                new_h, new_w = h - h % self.size_must_mode, w - w % self.size_must_mode
+                inputs = [im[:new_h, :new_w, :] for im in inputs]
+
+                in_tensor = self.numpy2tensor(inputs).to(self.device)
+                preprocess_time = time.time()
+                _, output_stage1, _, output, _ = self.net(in_tensor)
+                forward_time = time.time()
+                output_img = self.tensor2numpy(output)
+
+                if self.save_image:
+                    if not os.path.exists(result_path):
+                        os.makedirs(result_path, exist_ok=True)
+                    imageio.imwrite(file_result, output_img)
+                    print (f'save in ... {file_result} [{preprocess_time-start_time:.2f} sec | {forward_time-preprocess_time:.2f} sec]')
+
+    def infer_(self):
         with torch.no_grad():
             total_psnr = {}
             total_ssim = {}
-            videos = sorted(os.listdir(self.input_path))
+            videos = sorted(os.listdir(self.data_path))
+            # pprint (videos)
+            # pprint (sorted(glob.glob(os.path.join(self.input_path, "*"))))
+            # assert False
             for v in videos:
+                if v == '.DS_Store':
+                    continue
                 video_psnr = []
                 video_ssim = []
-                input_frames = sorted(glob.glob(os.path.join(self.input_path, v, "*")))
-                gt_frames = sorted(glob.glob(os.path.join(self.GT_path, v, "*")))
+                input_frames = sorted(glob.glob(os.path.join(self.data_path, v, 'input', "*")))
+                gt_frames = sorted(glob.glob(os.path.join(self.data_path, v, 'GT', "*")))
+                # pprint (input_frames)
+                # pprint (gt_frames)
+                # assert False
+
                 input_seqs = self.gene_seq(input_frames, n_seq=self.n_seq)
                 gt_seqs = self.gene_seq(gt_frames, n_seq=self.n_seq)
+                # pprint (input_seqs)
+                # pprint (gt_seqs)
+                # assert False
+
                 for in_seq, gt_seq in zip(input_seqs, gt_seqs):
+                    # pprint (in_seq)
+                    # pprint (gt_seq)
+                    # assert False
+
                     start_time = time.time()
                     filename = os.path.basename(in_seq[self.n_seq // 2]).split('.')[0]
                     inputs = [imageio.imread(p) for p in in_seq]
@@ -121,6 +185,7 @@ class Inference:
                 sum_ssim += sum(total_ssim[k])
                 n_img += len(total_psnr[k])
             self.logger.write_log("# Total AVG-PSNR={:.5}, AVG-SSIM={:.4}".format(sum_psnr / n_img, sum_ssim / n_img))
+            # assert False
 
     def gene_seq(self, img_list, n_seq):
         if self.border:
@@ -213,31 +278,129 @@ class Inference:
         else:
             raise ValueError('Wrong input image dimensions.')
 
+class AttrDict(dict):
+
+    IMMUTABLE = '__immutable__'
+
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__[AttrDict.IMMUTABLE] = False
+
+    def __getattr__(self, name):
+        if name in self.__dict__:
+            return self.__dict__[name]
+        elif name in self:
+            return self[name]
+        else:
+            raise AttributeError(name)
+
+    def __setattr__(self, name, value):
+        if not self.__dict__[AttrDict.IMMUTABLE]:
+            if name in self.__dict__:
+                self.__dict__[name] = value
+            else:
+                self[name] = value
+        else:
+            raise AttributeError(
+                'Attempted to set "{}" to "{}", but AttrDict is immutable'.
+                format(name, value)
+            )
+
+    def immutable(self, is_immutable):
+        """Set immutability to is_immutable and recursively apply the setting
+        to all nested AttrDicts.
+        """
+        self.__dict__[AttrDict.IMMUTABLE] = is_immutable
+        # Recursively set immutable state
+        for v in self.__dict__.values():
+            if isinstance(v, AttrDict):
+                v.immutable(is_immutable)
+        for v in self.values():
+            if isinstance(v, AttrDict):
+                v.immutable(is_immutable)
+
+    def is_immutable(self):
+        return self.__dict__[AttrDict.IMMUTABLE]
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='CDVD-TSP-Inference')
 
-    parser.add_argument('--save_image', action='store_true', default=True, help='save image if true')
-    parser.add_argument('--border', action='store_true', help='restore border images of video if true')
+    '''
+    1)
+    python inference.py --default_data DVD
+        # --default_data: the dataset you want to test, optional: DVD, GOPRO
 
-    parser.add_argument('--default_data', type=str, default='.',
-                        help='quick test, optional: DVD, GOPRO')
-    parser.add_argument('--data_path', type=str, default='../dataset/DVD/test',
-                        help='the path of test data')
-    parser.add_argument('--model_path', type=str, default='../pretrain_models/CDVD_TSP_DVD_Convergent.pt',
-                        help='the path of pretrain model')
-    parser.add_argument('--result_path', type=str, default='../infer_results',
-                        help='the path of deblur result')
-    args = parser.parse_args()
+    Namespace(
+        border=False, 
+        data_path='../dataset/DVD/test', 
+        default_data='DVD', 
+        model_path='../pretrain_models/CDVD_TSP_DVD_Convergent.pt',
+        result_path='../infer_results/DVD', 
+        save_image=True
+        )
 
-    if args.default_data == 'DVD':
-        args.data_path = '../dataset/DVD/test'
-        args.model_path = '../pretrain_models/CDVD_TSP_DVD_Convergent.pt'
-        args.result_path = '../infer_results/DVD'
-    elif args.default_data == 'GOPRO':
-        args.data_path = '../dataset/GOPRO/test'
-        args.model_path = '../pretrain_models/CDVD_TSP_GOPRO.pt'
-        args.result_path = '../infer_results/GOPRO'
+    2)
+    cd ./code
+    python inference.py --data_path path/to/data --model_path path/to/pretrained/model
+        # --data_path: the path of your dataset.
+        # --model_path: the path of the downloaded pretrained model.
+
+    Namespace(
+        border=False, 
+        data_path='../dataset/DVD/test', 
+        default_data='.', 
+        model_path='../pretrain_models/CDVD_TSP_DVD_Convergent.pt',
+        result_path='../infer_results', 
+        save_image=True
+        )
+    '''
+
+
+    # parser = argparse.ArgumentParser(description='CDVD-TSP-Inference')
+
+    # parser.add_argument('--save_image', action='store_true', default=True, help='save image if true')
+    # parser.add_argument('--border', action='store_true', help='restore border images of video if true')
+
+    # parser.add_argument('--default_data', type=str, default='.',
+    #                     help='quick test, optional: DVD, GOPRO')
+    # parser.add_argument('--data_path', type=str, default='../dataset/DVD/test',
+    #                     help='the path of test data')
+    # parser.add_argument('--model_path', type=str, default='../pretrain_models/CDVD_TSP_DVD_Convergent.pt',
+    #                     help='the path of pretrain model')
+    # parser.add_argument('--result_path', type=str, default='../infer_results',
+    #                     help='the path of deblur result')
+    # args = parser.parse_args()
+
+    # if args.default_data == 'DVD':
+    #     args.data_path = '../dataset/DVD/test'
+    #     args.model_path = '../pretrain_models/CDVD_TSP_DVD_Convergent.pt'
+    #     args.result_path = '../infer_results/DVD'
+    # elif args.default_data == 'GOPRO':
+    #     args.data_path = '../dataset/GOPRO/test'
+    #     args.model_path = '../pretrain_models/CDVD_TSP_GOPRO.pt'
+    #     args.result_path = '../infer_results/GOPRO'
+    
+    # print (args)
+    # assert False
+
+    dataset_name = 'DVD'
+    # dataset_type = 'quantitative_datasets'
+    # dataset_sample = 'IMG_0200'
+    dataset_type = 'qualitative_datasets'
+    dataset_sample = 'starbucks' # 'bicycle'
+
+    args = AttrDict()
+    args.border = True 
+    # args.default_data = dataset_name
+    args.model_path = '/nethome/hkwon64/Research/imuTube/repos_v2/motion_blur/CDVD-TSP/pretrain_models/CDVD_TSP_DVD_Convergent.pt'
+    args.save_image = True
+    args.device = torch.device('cuda', 0)
+
+    data_path = f'/nethome/hkwon64/Datasets/public/DVD/DeepVideoDeblurring_Dataset/{dataset_type}/{dataset_sample}/input' 
+    result_path = f'/nethome/hkwon64/Research/imuTube/repos_v2/motion_blur/CDVD-TSP/infer_results/{dataset_name}/{dataset_type}/{dataset_sample}' 
 
     Infer = Inference(args)
-    Infer.infer()
+    # assert False
+
+    # Infer.infer_()
+    # Infer.predict()
+    Infer.predict(data_path, result_path)

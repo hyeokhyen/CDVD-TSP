@@ -1,3 +1,6 @@
+infer_results/
+pretrain_models/
+
 /code/.idea/
 */__pycache__
 .DS_Store
